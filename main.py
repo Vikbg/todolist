@@ -65,7 +65,7 @@ class ToDoList:
         try:
             os.mkdir(f'users/{username}/')
             try:
-                with open(f"{data_file}/data.txt", "x"):
+                with open(f"{data_file}", "x"):
                     print("Data file succesfully created.")
                     self.save_data_file(username=username)
             except FileExistsError:
@@ -569,7 +569,7 @@ def modify_user_modal(user, users):
     username = users_list[i]
     print(f"\nYou selected {username}, enter the password.\n")
     password = getpass("(password) > ")
-    with open(f"users/{username}/credentials") as f:
+    with open(f"users/{username}/credentials.txt") as f:
         user_password = f.read()
     try:
         if password is None or password == '':
@@ -627,11 +627,11 @@ def wipe_data_for_user(username, users):
                         print(f"\nAre you sure to wipe {username} data ?.\n")
                         confirmation = str(input("(yes/no) > "))
                         confirmation = confirmation.lower().strip()
-                        if confirmation != 'yes' or 'no':
+                        if confirmation not in ['yes', 'no']:
                             raise ValueError
                         confirm_confirmation = str(input("(confirm) > "))
                         confirm_confirmation = confirm_confirmation.lower().strip()
-                        if confirm_confirmation != 'yes' or 'no':
+                        if confirm_confirmation not in ['yes', 'no']:
                             raise ValueError
                         if confirmation == 'no':
                             pass
@@ -672,11 +672,11 @@ def delete_user(username, users):
                         print(f"\nAre you sure to delete {username} account ?.\n")
                         confirmation = str(input("(yes/no) > "))
                         confirmation = confirmation.lower().strip()
-                        if confirmation != 'yes' or 'no':
+                        if confirmation not in ['yes', 'no']:
                             raise ValueError
                         confirm_confirmation = str(input("(confirm) > "))
                         confirm_confirmation = confirm_confirmation.lower().strip()
-                        if confirm_confirmation != 'yes' or 'no':
+                        if confirm_confirmation not in ['yes', 'no']:
                             raise ValueError
                         if confirmation == 'no':
                             print("\nAction Canceled.")
