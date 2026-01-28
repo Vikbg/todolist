@@ -9,92 +9,118 @@ import shutil
 import time
 import os
 from getpass import getpass
+import bcrypt
+from datetime import datetime, timedelta
+
 
 class User:
     def __init__(self, username, password):
-        self.id = id(self)
         self.username = username
-        self.password = password
+        self.password_hash = self._hash_password(password)
+
+    def _hash_password(self, password):
+        # Generate a salt and hash the password
+        # bcrypt.gensalt() generates a new salt each time, making it secure
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     def create_user_storage(self):
-
         user_dir = f"users/{self.username}"
 
         os.makedirs(user_dir, exist_ok=True)
 
         with open(f"{user_dir}/credentials.txt", "w") as f:
-            f.write(self.password)
-            f.close
-        
-        print(f"\n{self.username}'s storage create.\n")
+            f.write(self.password_hash)
+
+        print(f"\n{self.username}'s storage created.\n")
 
 
 # Task class
 
+
 class Task:
-    def __init__(self, name, complete_before ,description=None):
-        self.id = int(time.time() * 1000)
+    def __init__(self, name, complete_before, description=None):
+        self.id = int(time.time() * 1000) # Keeping original id generation for now
         self.name = name
         self.description = description
-        self.last_modified = float(time.time())
-        self.complete_before = (complete_before*86400) + self.last_modified
+        self.last_modified = datetime.now()
+        # complete_before is expected in days, so add it as a timedelta
+        self.complete_before = datetime.now() + timedelta(days=complete_before)
         self.completed = False
 
 
 # ToDoList class to store tasks
+
 
 class ToDoList:
     def __init__(self):
         self.tasks = []
 
     def save_data_file(self, username):
-        data_file = f'users/{username}/data.txt'
+        data_file = f"users/{username}/data.txt"
         try:
             with open(data_file, "w") as f:
                 for task in self.tasks:
-                    line = f"{task.name}|{task.description}|{task.complete_before}|{task.last_modified}|{task.completed}\n"
+                    # Convert datetime objects to Unix timestamps (float) for storage
+                    last_modified_timestamp = task.last_modified.timestamp()
+                    complete_before_timestamp = task.complete_before.timestamp()
+                    line = f"{task.name}|{task.description}|{complete_before_timestamp}|{last_modified_timestamp}|{task.completed}\n"
                     f.write(line)
             print("Data file saved successfully.")
-        except FileNotFoundError:
-            print("Data file not found, initializing data file.")
-            self.init_data_file(username)
-
+        except Exception as e:
+            print(f"Error saving data file: {e}")
 
     def init_data_file(self, username):
-        data_file = f'users/{username}/data.txt'
-        try:
-            os.mkdir(f'users/{username}/')
+        user_dir = f"users/{username}"
+        data_file = f"{user_dir}/data.txt"
+        
+        os.makedirs(user_dir, exist_ok=True) # Ensure user directory exists
+
+        if not os.path.exists(data_file):
             try:
-                with open(f"{data_file}", "x"):
-                    print("Data file succesfully created.")
-                    self.save_data_file(username=username)
-            except FileExistsError:
-                print("Data file already exist, pass.")
-        except FileExistsError:
-            print("User directory already exist, pass.")
-            try:
-                with open(f"{data_file}/data.txt", "x"):
-                    print("Data file succesfully created.")
-                    self.save_data_file(username=username)
-            except FileExistsError:
-                print("Data file already exist, pass.")
+                with open(data_file, "w"): # Create an empty file if it doesn't exist
+                    pass
+                print(f"Data file for {username} successfully created.")
+            except Exception as e:
+                print(f"Error creating data file for {username}: {e}")
+        else:
+            print(f"Data file for {username} already exists, skipping creation.")
 
     def load_from_data_file(self, username):
-        data_file = f'users/{username}/data.txt'
+        data_file = f"users/{username}/data.txt"
         try:
             with open(data_file, "r") as f:
                 lines = f.readlines()
                 # Clear current tasks
                 self.tasks = []
                 for line in lines:
-                    name, description, complete_before, last_modified, completed = line.strip().split("|")
-                    task = Task(name, float(complete_before), description if description != "None" else None)
-                    task.last_modified = float(last_modified)
+                    name, description, complete_before_ts, last_modified_ts, completed = (
+                        line.strip().split("|")
+                    )
+                    # Convert timestamps back to datetime objects
+                    complete_before_dt = datetime.fromtimestamp(float(complete_before_ts))
+                    last_modified_dt = datetime.fromtimestamp(float(last_modified_ts))
+                    
+                    # When loading, the 'complete_before' parameter in Task __init__ expects days,
+                    # but we have a datetime object. We'll reconstruct the Task object and then
+                    # explicitly set its datetime attributes.
+                    # A dummy value for complete_before (days) is passed to the constructor,
+                    # which will be immediately overwritten by complete_before_dt.
+                    task = Task(
+                        name,
+                        (complete_before_dt - datetime.now()).days if complete_before_dt > datetime.now() else 0, # Placeholder
+                        description if description != "None" else None,
+                    )
+                    task.complete_before = complete_before_dt
+                    task.last_modified = last_modified_dt
                     task.completed = completed == "True"
                     self.tasks.append(task)
         except FileNotFoundError:
-            print("Data file not find !")
+            print(f"Data file for {username} not found. Initializing...")
             self.init_data_file(username)
+            # After initialization, attempt to load again (it will be empty)
+            self.load_from_data_file(username) 
+        except Exception as e:
+            print(f"Error loading data file: {e}")
 
     def add_task(self, name, complete_before, description=None):
         new_task = Task(name, complete_before, description)
@@ -102,203 +128,214 @@ class ToDoList:
         print(f"Added a task : {name}\n")
 
     def print_tasks(self, username):
-                self.load_from_data_file(username=username)
-                print("\n------------------ All Tasks ------------------\n")
+        self.load_from_data_file(username=username)
+        print("\n------------------ All Tasks ------------------\n")
 
-                if not self.tasks:
-                    print("No tasks available.")
-                    return
+        if not self.tasks:
+            print("No tasks available.")
+            return
 
-                for index, task in enumerate(self.tasks, start=1):
-                    name = task.name
-                    desc = task.description
-                    last_modified_days = (time.time() - task.last_modified) / 86400  # en jours
+        for index, task in enumerate(self.tasks, start=1):
+            name = task.name
+            desc = task.description if task.description else "No description"
+            
+            # Calculate duration since last modified
+            time_since_modified = datetime.now() - task.last_modified
+            last_modified_str = f"{time_since_modified.days} days ago"
 
-                    if task.completed:
-                        status = "Completed!"
+            if task.completed:
+                status = "Completed!"
+            else:
+                time_remaining = task.complete_before - datetime.now()
+                if time_remaining.total_seconds() < 0:
+                    status = "Overdue!"
+                else:
+                    days_remaining = time_remaining.days
+                    hours_remaining = time_remaining.seconds // 3600
+                    minutes_remaining = (time_remaining.seconds % 3600) // 60
+                    if days_remaining > 0:
+                        status = f"Need to complete in {days_remaining} days, {hours_remaining} hours."
+                    elif hours_remaining > 0:
+                        status = f"Need to complete in {hours_remaining} hours, {minutes_remaining} minutes."
                     else:
-                        remaining_days = (task.complete_before - time.time()) / 86400
-                        if remaining_days < 0:
-                            status = "Overdue!"
-                        else:
-                            status = f"Need to complete in {remaining_days:.2f} days."
-                            # Print with or without description
-                            if desc:
-                                print(f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified_days:.2f} days ago")
-                            else:
-                                print(f"{index} - {name}. {status} - Last Modified : {last_modified_days:.2f} days ago")
+                        status = f"Need to complete in {minutes_remaining} minutes."
+            
+            # Print with or without description
+            if desc:
+                print(
+                    f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified_str}"
+                )
+            else:
+                print(
+                    f"{index} - {name}. {status} - Last Modified : {last_modified_str}"
+                )
 
     def show_tasks(self, username, users):
-            self.print_tasks(username=username)
-
-            print("\n| 1 - Show only completed")
-            print("| 2 - Show only uncompleted")
-            print("| 3 - Sort By Echeance Date")
-            print("| 4 - Sort By Modification Date")
-            print("| 5 - Search by terms")
-            print("| 0 - Return\n")
-
-            options = [0, 1, 2, 3, 4, 5]
-            option = int(input("(int) > "))
-            index = 0
-
-            try:
-                if option not in options:
-                    raise ValueError
-                if option == 0:
-                    connected_menu(username=username, users=users)
-                if option == 1:
-                    print("\n------------------ Completed Tasks ------------------\n")
-                    for i in self.tasks:
-                        index += 1
-                        name = i.name
-                        desc = i.description
-                        last_modified = (time.time() - i.last_modified) / 86400
+        self.load_from_data_file(username=username)
         
-                        # Print with or without description
-                        if i.completed:
-                            status = "Completed !"
-                            if desc:
-                                print(f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified:.2f} days ago")
-                            else:
-                                print(f"{index} - {name}. {status} - Last Modified : {last_modified:.2f} days ago")
+        def _display_tasks_list(tasks_to_display, title="Tasks"):
+            print(f"\n------------------ {title} ------------------\n")
+            if not tasks_to_display:
+                print("No tasks available.")
+                return
+
+            for index, task in enumerate(tasks_to_display, start=1):
+                name = task.name
+                desc = task.description if task.description else "No description"
+                
+                time_since_modified = datetime.now() - task.last_modified
+                last_modified_str = f"{time_since_modified.days} days ago"
+
+                if task.completed:
+                    status = "Completed!"
+                else:
+                    time_remaining = task.complete_before - datetime.now()
+                    if time_remaining.total_seconds() < 0:
+                        status = "Overdue!"
                     else:
-                        print("No tasks completed")
-                if option == 2:
-                    print("\n------------------ UnCompleted Tasks ------------------\n")
-                    for i in self.tasks:
-                        index += 1
-                        name = i.name
-                        desc = i.description
-                        last_modified = (time.time() - i.last_modified) / 86400
-                        if not i.completed:
-                            remaining_days = (i.complete_before - time.time()) / 86400
-                            status = f"Need to complete in {remaining_days:.2f} days."
-                            if desc:
-                                print(f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified:.2f} days ago")
-                            else:
-                                print(f"{index} - {name}. {status} - Last Modified : {last_modified:.2f} days ago")
-                if option == 3:
-                    sorted_tasks = sorted(todolist.tasks, key=lambda  todolist: todolist.complete_before)
-                    for i in sorted_tasks:
-                        index += 1
-                        name = i.name
-                        desc = i.description
-                        last_modified = (time.time() - i.last_modified) / 86400
-                        if i.completed:
-                            status = "Completed !"
+                        days_remaining = time_remaining.days
+                        hours_remaining = time_remaining.seconds // 3600
+                        minutes_remaining = (time_remaining.seconds % 3600) // 60
+                        if days_remaining > 0:
+                            status = f"Need to complete in {days_remaining} days, {hours_remaining} hours."
+                        elif hours_remaining > 0:
+                            status = f"Need to complete in {hours_remaining} hours, {minutes_remaining} minutes."
                         else:
-                            remaining_days = (i.complete_before - time.time()) / 86400
-                            status = f"Need to complete in {remaining_days:.2f} days."
+                            status = f"Need to complete in {minutes_remaining} minutes."
+                
+                if desc:
+                    print(
+                        f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified_str}"
+                    )
+                else:
+                    print(
+                        f"{index} - {name}. {status} - Last Modified : {last_modified_str}"
+                    )
 
-                        print("\n------------------ Sorted Tasks By Echance Date ------------------\n")
-        
-                        # Print with or without description
-                        if desc:
-                            print(f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified:.2f} days ago")
-                        else:
-                            print(f"{index} - {name}. {status} - Last Modified : {last_modified:.2f} days ago")
-                if option == 4:
-                    sorted_tasks = sorted(todolist.tasks, key=lambda  todolist: todolist.last_modified)
-                    for i in sorted_tasks:
-                        index += 1
-                        name = i.name
-                        desc = i.description
-                        last_modified = (time.time() - i.last_modified) / 86400
-                        if i.completed:
-                            status = "Completed !"
-                        else:
-                            remaining_days = (i.complete_before - time.time()) / 86400
-                            status = f"Need to complete in {remaining_days:.2f} days."
+        _display_tasks_list(self.tasks, "All Tasks")
 
-                        print("\n------------------ Sorted Tasks By Last Modification Date ------------------\n")
-        
-                        # Print with or without description
-                        if desc:
-                            print(f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified:.2f} days ago")
-                        else:
-                            print(f"{index} - {name}. {status} - Last Modified : {last_modified:.2f} days ago")
-                if option == 5:
-                    print("\n------------------ Search Tasks By Given Terms ------------------\n")
-                    print("Enter some terms to search themin tasks.\n")
-                    search_terms = input("(terms) > ")
-                    for i in self.tasks:
-                        if search_terms in i.name or search_terms in i.description:
-                            index += 1
-                            name = i.name
-                            desc = i.description
-                            last_modified = (time.time() - i.last_modified) / 86400
-                            if i.completed:
-                                status = "Completed !"
-                            else:
-                                remaining_days = (i.complete_before - time.time()) / 86400
-                                status = f"Need to complete in {remaining_days:.2f} days."
-        
-                            # Print with or without description
-                            if desc:
-                               print(f"{index} - {name}. {desc}. {status} - Last Modified : {last_modified:.2f} days ago")
-                            else:
-                               print(f"{index} - {name}. {status} - Last Modified : {last_modified:.2f} days ago")
+        print("\n| 1 - Show only completed")
+        print("| 2 - Show only uncompleted")
+        print("| 3 - Sort By Due Date")
+        print("| 4 - Sort By Modification Date")
+        print("| 5 - Search by terms")
+        print("| 0 - Return\n")
 
+        options = [0, 1, 2, 3, 4, 5]
+        try:
+            option = int(input("(int) > "))
+
+            if option not in options:
+                raise ValueError
+            
+            if option == 0:
+                return # Return to the calling menu
+
+            elif option == 1:
+                completed_tasks = [task for task in self.tasks if task.completed]
+                _display_tasks_list(completed_tasks, "Completed Tasks")
+            
+            elif option == 2:
+                uncompleted_tasks = [task for task in self.tasks if not task.completed]
+                _display_tasks_list(uncompleted_tasks, "Uncompleted Tasks")
+            
+            elif option == 3:
+                # Sort by complete_before (due date)
+                sorted_tasks = sorted(self.tasks, key=lambda task: task.complete_before)
+                _display_tasks_list(sorted_tasks, "Sorted Tasks By Due Date")
+            
+            elif option == 4:
+                # Sort by last_modified date
+                sorted_tasks = sorted(self.tasks, key=lambda task: task.last_modified, reverse=True)
+                _display_tasks_list(sorted_tasks, "Sorted Tasks By Last Modification Date")
+            
+            elif option == 5:
+                print(
+                    "\n------------------ Search Tasks By Given Terms ------------------\n"
+                )
+                search_terms = input("Enter some terms to search them in tasks.\n(terms) > ")
+                matching_tasks = [
+                    task for task in self.tasks 
+                    if search_terms.lower() in task.name.lower() or 
+                       (task.description and search_terms.lower() in task.description.lower())
+                ]
+                _display_tasks_list(matching_tasks, f"Search Results for '{search_terms}'")
+        except ValueError:
+            print("Invalid value, please enter a number from the options.")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+
+    def modify_task(
+        self,
+        input_id,
+        name=None,
+        description=None,
+        complete_before=None, # This will be days from now
+        completed=None,
+    ):
+        task_index = input_id - 1
+
+        if not (0 <= task_index < len(self.tasks)):
+            print(f"Error: No task found with ID {input_id}.")
+            return False
+
+        task = self.tasks[task_index]
+        has_changed = False
+
+        # Store old values for printing changes
+        old_name = task.name
+        old_description = task.description
+        old_complete_before_dt = task.complete_before
+        old_completed = task.completed
+
+        if name is not None and name != old_name:
+            task.name = name
+            print(f"Changed name from '{old_name}' to '{name}'.")
+            has_changed = True
+        
+        if description is not None and description != old_description:
+            task.description = description
+            print(f"Changed description from '{old_description}' to '{description}'.")
+            has_changed = True
+
+        if complete_before is not None:
+            try:
+                # complete_before is expected in days
+                new_complete_before_dt = datetime.now() + timedelta(days=float(complete_before))
+                if new_complete_before_dt != old_complete_before_dt:
+                    task.complete_before = new_complete_before_dt
+                    print(f"Changed completion date from '{old_complete_before_dt.strftime('%Y-%m-%d')}' to '{new_complete_before_dt.strftime('%Y-%m-%d')}'.")
+                    has_changed = True
             except ValueError:
-                print("Invalid value, I authorize you to buy glasses.")
-
-    def modify_task(self, input_id, name=None, description=None, complete_before=None, completed=None):
-
-        complete_before_days: float | None
-
-        complete_before_days = complete_before
-
-        id = input_id - 1
+                print(f"Invalid input for 'complete before' days: {complete_before}. Must be a number.")
         
-        has_changed = True
-
-        old_name = self.tasks[id].name
-        old_description = self.tasks[id].description
-
-        old_complete_before = self.tasks[id].complete_before
-        old_complete_before = (old_complete_before - time.time()) / 86400
-        old_completed = self.tasks[id].completed
-
-        if name is not None:
-            self.tasks[id].name = name
-            print(f"Change from {old_name} to {name}")
-        if description is not None:
-            self.tasks[id].description = description
-            print(f"Change from {old_description} to {description}")
-        if complete_before_days is not None:
-            complete_before = float(complete_before_days) * 86400 + time.time()
-
-            self.tasks[id].complete_before = complete_before
-            print(f"Change from {old_complete_before:.2f} to {complete_before_days}")
-        if completed != old_completed:
-            self.tasks[id].completed = completed
-            if completed is False and complete_before is not None and complete_before < old_complete_before:
-                try:
-                    complete_before = float(input("Before when you wanna end this new task: "))
-                    if complete_before.__class__ is not float:
-                        raise TypeError
-                    print(f"Now, task {self.tasks[id].name} need to be completed before {complete_before}")
-                    complete_before = float(complete_before) * 86400 + time.time()
-                    self.tasks[id].complete_before = complete_before
-                except TypeError:
-                    print("Type error, except a float number ! Like a number 1.0, 1.335, 2.0, 3.0 ect...")
-            elif completed is not None:
-                self.tasks[id].completed = True
-                print(f"Now, task {self.tasks[id].name} is Completed !")
-            else:
-                self.tasks[id].completed = False
-                print(f"Now, task {self.tasks[id].name} is UnCompleted !")
-        else:
-            has_changed = False
-            print("No change saved.\n")
-            return has_changed
+        if completed is not None and completed != old_completed:
+            task.completed = completed
+            print(f"Changed completion status for '{task.name}' to {'Completed' if completed else 'Uncompleted'}.")
+            has_changed = True
+            
+            # If marked uncompleted, prompt for a new complete_before date if the old one is in the past
+            if not completed and task.complete_before < datetime.now():
+                while True:
+                    try:
+                        new_days_str = input("Task marked uncompleted and is overdue. Enter new days to complete (e.g., 5 for 5 days from now): ")
+                        new_days = float(new_days_str)
+                        task.complete_before = datetime.now() + timedelta(days=new_days)
+                        print(f"New completion date for '{task.name}' set to '{task.complete_before.strftime('%Y-%m-%d')}'.")
+                        has_changed = True
+                        break
+                    except ValueError:
+                        print("Invalid input. Please enter a number.")
         
         if has_changed:
-            self.tasks[id].last_modified = time.time()
-    
-    def delete_task(self, input_id, username):
+            task.last_modified = datetime.now()
+            print("Task modified successfully.")
+            return True
+        else:
+            print("No significant change detected or saved.")
+            return False
 
+    def delete_task(self, input_id, username):
         input_id = int(input_id)
 
         id = input_id - 1
@@ -307,60 +344,62 @@ class ToDoList:
 
         todolist.save_data_file(username=username)
 
-        print(f"Task \"{name}\" deleted")
+        print(f'Task "{name}" deleted')
 
     def save_backup(self, username):
         """
-            Save a backup of users/{username}/data.txt file in users/{username}/backups/{timestamp}/data.txt.
-            
-            Args:
-                username (str): The username for which to create a backup.
+        Save a backup of users/{username}/data.txt file in users/{username}/backups/{timestamp}/data.txt.
+
+        Args:
+            username (str): The username for which to create a backup.
         """
         user_data_path = os.path.join("users", username, "data.txt")
         backup_dir = os.path.join("users", username, "backups")
         timestamp = str(int(time.time()))  # Use timestamp as directory name for backup
         backup_path = os.path.join(backup_dir, timestamp)
         backup_file_path = os.path.join(backup_path, "data.txt")
-            
+
         # Check if the user's data file exists
-                 
+
         if not os.path.exists(user_data_path):
             print(f"\nError: User data file not found at {user_data_path}")
             return
-        
+
         # Create the backup directory if it doesn't exist
         if not os.path.exists(backup_dir):
             os.makedirs(backup_dir)
         # Create the timestamped backup directory
         if not os.path.exists(backup_path):
             os.makedirs(backup_path)
-                                    
+
         # Copy the data file to the backup location
         try:
-            shutil.copy2(user_data_path, backup_file_path) #copy2 preserves metadata
+            shutil.copy2(user_data_path, backup_file_path)  # copy2 preserves metadata
             print(f"\nBackup created successfully at {backup_file_path}")
         except Exception as e:
             print(f"\nError creating backup: {e}")
 
     def load_from_backup(self, username, timestamp):
-        backup_file_path = os.path.join("users", username, "backups", timestamp, "data.txt")
+        backup_file_path = os.path.join(
+            "users", username, "backups", timestamp, "data.txt"
+        )
         user_data_path = os.path.join("users", username, "data.txt")
-        
+
         # Check if the backup file exists
         if not os.path.exists(backup_file_path):
             print(f"\nError: Backup file not found at {backup_file_path}")
             return
-        
+
         # Restore the backup by copying it to the user's data file location
         try:
-            shutil.copy2(backup_file_path, user_data_path) #copy2 preserves metadata
+            shutil.copy2(backup_file_path, user_data_path)  # copy2 preserves metadata
             print(f"\nBackup restored successfully from {backup_file_path}")
         except Exception as e:
             print(f"\nError restoring backup: {e}")
 
     def show_backups(self, username):
         backup_dir = os.path.join("users", username, "backups")
-        
+
         try:
             backups = os.listdir(backup_dir)
             i = 0
@@ -376,32 +415,44 @@ class ToDoList:
 
     def delete_backup(self, username, timestamp):
         backup_file_path = os.path.join("users", username, "backups", timestamp)
-        
+
         try:
             shutil.rmtree(backup_file_path)
             print(f"\nBackup {timestamp} deleted successfully.")
         except Exception as e:
             print(f"\nError deleting backup: {e}")
 
+
 def print_title(str):
-    print("\n", "-"*5, " ", str, " ", "-"*5)
+    print("\n", "-" * 5, " ", str, " ", "-" * 5)
+
 
 def make_clickable(text=None, url=""):
     if text is None:
         text = url  # Use the URL itself as the display text if none is provided
-    return f'\033]8;;{url}\033\\{text}\033]8;;\033\\'
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
 
 
 def show_networks(username):
-    if username == 'Viktor':
+    if username == "Viktor":
         print_title("My Networks")
         print("\nHello buddy, I'm Viktor the devlopper !")
         print("Check my networks : ")
-        print(f"     Github : {make_clickable('Vikbg', 'https://github.com/Vikbg/')} & {make_clickable('viktor_srhk', 'https://github.com/viktorsrhk/')}")
-        print(f"     Instagram : {make_clickable('viktor.wow', 'https://instagram.com/viktor.wow/')} (public) & {make_clickable('viktor_srhk', 'https://instagram.com/viktor_srhk/')} (private)")
-        print(f"     TikTok : {make_clickable('viktor_srhk', 'https://www.tiktok.com/@viktor_srhk')}")
-        print(f"     YouTube : {make_clickable('viktor', 'https://www.youtube.com/@viktorsrhk')}")
-        print(f"     Linkedin : {make_clickable('viktor_srhk', 'https://www.linkedin.com/in/viktorsrhk/')}")
+        print(
+            f"     Github : {make_clickable('Vikbg', 'https://github.com/Vikbg/')} & {make_clickable('viktor_srhk', 'https://github.com/viktorsrhk/')}"
+        )
+        print(
+            f"     Instagram : {make_clickable('viktor.wow', 'https://instagram.com/viktor.wow/')} (public) & {make_clickable('viktor_srhk', 'https://instagram.com/viktor_srhk/')} (private)"
+        )
+        print(
+            f"     TikTok : {make_clickable('viktor_srhk', 'https://www.tiktok.com/@viktor_srhk')}"
+        )
+        print(
+            f"     YouTube : {make_clickable('viktor', 'https://www.youtube.com/@viktorsrhk')}"
+        )
+        print(
+            f"     Linkedin : {make_clickable('viktor_srhk', 'https://www.linkedin.com/in/viktorsrhk/')}"
+        )
         print(f"     Replit : {make_clickable('VikS0', 'https://replit.com/@VikS0/')}")
         print(f"     Portfolio : {make_clickable(None, 'In The Pipeline.')}")
 
@@ -409,7 +460,7 @@ def show_networks(username):
 def show_credits():
     print_title("Credits")
     print("\nToDoList app developed with love by viktor_srhk.")
-    show_networks(username='Viktor')
+    show_networks(username="Viktor")
 
 
 def update_users_list():
@@ -418,36 +469,32 @@ def update_users_list():
         return users
     except FileNotFoundError:
         os.mkdir("users")
-        users = os.listdir("users/")
+        users = []
         return users
+
 
 def list_users():
     i = 0
-    no_user = False
-    users_list = []
-
-    update_users_list()
-    users = update_users_list()
+    
+    users = update_users_list() # Call only once
+    users_list = users # The update_users_list already returns a list of usernames or []
 
     print("\n------------------ USERS ------------------")
 
-    if users == []:
-        no_user = True
+    if not users_list: # Check if the list is empty
         print("\nNo users available. Create one !\n")
-        return no_user
+        return [], True # Consistent return: empty list and True for no_user
     else:
-        no_user = False
         print("\nAll available users : ")
         print("--------------------------------")
-        for user in users:
+        for user in users_list:
             i += 1
-            users_list.append(user)
             print(f"    {i} - {user}")
         print("--------------------------------\n")
-        return users_list, no_user
-    
-def create_user(username, password):
+        return users_list, False # Consistent return: list of users and False for no_user
 
+
+def create_user(username, password):
     new_user = User(username, password)
     new_user.create_user_storage()
 
@@ -455,285 +502,311 @@ def create_user(username, password):
 
     print(f"User {username} created !")
 
+
 def creation_user_modal():
     try:
         print("Leave username blank to cancel.")
-        username = input("(username) > ")
-        if username == '' or username is None:
-            raise ValueError
-        try:
-            password = getpass("(password) > ")
-            if password == '' or password is None:
-                raise ValueError
-            create_user(username=username, password=password)
-        except ValueError:
-            print("Password cannot be empty")
-    except ValueError:
-        print("Action Cancled")
-        menu(False)
+        username = input("(username) > ").strip()
+        if username == "":
+            print("Action Cancelled.")
+            return # Exit modal gracefully
+        
+        # Check if username already exists
+        if os.path.exists(f"users/{username}"):
+            print(f"Error: User '{username}' already exists. Please choose a different username.")
+            return
+            
+        password = getpass("(password) > ")
+        if password == "":
+            print("Error: Password cannot be empty.")
+            return # Exit modal gracefully
+        
+        create_user(username=username, password=password)
+        print(f"User {username} created successfully!")
+    except Exception as e:
+        print(f"An unexpected error occurred during user creation: {e}")
+
+
+def _verify_password(username, provided_password):
+    """
+    Verifies a provided password against the stored hashed password for a given username.
+    Returns True if the password matches, False otherwise.
+    """
+    try:
+        with open(f"users/{username}/credentials.txt", "r") as f:
+            stored_hash = f.read().strip()
+        
+        if provided_password is None or provided_password == "":
+            print("\nError: Password cannot be empty.")
+            return False
+        
+        # Ensure provided_password is a string before encoding
+        if not isinstance(provided_password, str):
+            provided_password = str(provided_password)
+
+        if bcrypt.checkpw(provided_password.encode("utf-8"), stored_hash.encode("utf-8")):
+            return True
+        else:
+            print("\nError: Wrong Password !")
+            return False
+    except FileNotFoundError:
+        print(f"\nError: User {username} credentials file not found.")
+        return False
+    except Exception as e:
+        print(f"\nAn unexpected error occurred during password verification: {e}")
+        return False
 
 def modify_user_username(username):
     try:
-        current_password: str
-        password: str
-        new_username: str
-        confirm_new_username: str
         print(f"\nYou will change username for {username} user, think before act !")
         print("Please enter your current password.\n")
         current_password = str(getpass("(password) > "))
-        with open(f"users/{username}/credentials.txt", "r") as f:
-            password = f.read().strip()
-            f.close
-        if current_password is None or current_password == '':
-            raise ValueError
-        if current_password.__class__ is str:
+        
+        if _verify_password(username, current_password):
             try:
-                if current_password == password:
-                    try:
-                        print("\nAccept.")
-                        print("Enter the new username.\n")
-                        new_username = str(input("(username) > "))
-                        confirm_new_username = str(input("(confirm) > "))
-                        if new_username.__class__ is str and confirm_new_username.__class__ is str:
-                            if new_username == confirm_new_username:
-                                os.rename(f"users/{username}", f"users/{new_username}")
-                                print("\nUsername changed sucessfully.")
-                            else:
-                                raise ValueError
-                        else:
-                            raise TypeError
-                    except ValueError:
-                        print("\nUsername Dismatch !")
-                                
-                    except TypeError:
-                        print("\nPassword need to be a string value")
+                print("\nAccept.")
+                print("Enter the new username.\n")
+                new_username = str(input("(username) > "))
+                confirm_new_username = str(input("(confirm) > "))
+                
+                if new_username == "" or new_username is None:
+                    raise ValueError("New username cannot be empty.")
+
+                if new_username == confirm_new_username:
+                    # Check if new username already exists
+                    if os.path.exists(f"users/{new_username}"):
+                        raise ValueError(f"User with username '{new_username}' already exists.")
+                    
+                    os.rename(f"users/{username}", f"users/{new_username}")
+                    print("\nUsername changed successfully.")
+                    # Update menu with new username if current user changed their own username
+                    # This logic needs to be handled outside, as `modify_user_username` doesn't know the current logged in user directly
                 else:
-                    raise ValueError
-            except ValueError:
-                print("\nWrong Password !")
-    except ValueError:
-        print("\nPassword cannot be Empty !")
+                    raise ValueError("Usernames Dismatch !")
+            except ValueError as e:
+                print(f"\nError: {e}")
+            except TypeError:
+                print("\nError: Username needs to be a string value")
+        # _verify_password already prints error messages for incorrect password
+    except ValueError as e:
+        print(f"\nError: {e}")
+
 
 def modify_user_password(username):
     try:
-        current_password: str
-        password: str
-        new_password: str
-        confirm_new_password: str
         print(f"\nYou will change password for {username} user, think before act !")
         print("Please enter your current password.\n")
         current_password = str(getpass("(password) > "))
         with open(f"users/{username}/credentials.txt", "r") as f:
-            password = f.read().strip()
-            f.close
-        if current_password is None or current_password == '':
-            raise ValueError
-        if current_password.__class__ is str:
-            try:
-                if current_password == password:
-                    try:
-                        print("\nAccept.")
-                        print("Enter the new password.\n")
-                        new_password = str(getpass("(password) > "))
-                        confirm_new_password = str(input("(confirm) > "))
-                        if new_password.__class__ is str and  confirm_new_password.__class__ is str:
-                            if new_password == confirm_new_password:
-                                with open(f"users/{username}/credentials.txt", "w") as f:
-                                    f.write(new_password)
-                                    print("\nPassword changed sucessfully.")
-                            else:
-                                raise ValueError
-                        else:
-                            raise TypeError
-                    except ValueError:
-                        print("\nPasswords Dismatch !")
-                                
-                    except TypeError:
-                        print("\nPassword need to be a string value")
-                else:
-                    raise ValueError
-            except ValueError:
-                print("\nWrong Password !")
-    except ValueError:
-        print("\nPassword cannot be Empty !")
+            stored_hash = f.read().strip()
+        
+        if current_password is None or current_password == "":
+            raise ValueError("Password cannot be empty")
+        
+        if bcrypt.checkpw(current_password.encode("utf-8"), stored_hash.encode("utf-8")):
+            print("\nAccept.")
+            print("Enter the new password.\n")
+            new_password = str(getpass("(password) > "))
+            confirm_new_password = str(input("(confirm) > "))
+            
+            if new_password is None or new_password == "":
+                raise ValueError("New password cannot be empty")
 
-def modify_user_modal(user, users):
-    print_title("Modify User")
-    list_users()
-    selected_user = 1
-    users_list = []
-    for user in users:
-        users_list.append(user)
-    selected_user = int(input("Select a user. (ex : 1 for 1 - viktor_srhk.) >  "))
-    i = selected_user - 1
-    username = users_list[i]
-    print(f"\nYou selected {username}, enter the password.\n")
-    password = getpass("(password) > ")
-    with open(f"users/{username}/credentials.txt") as f:
-        user_password = f.read()
-    try:
-        if password is None or password == '':
-            raise ValueError
+            if new_password == confirm_new_password:
+                new_password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+                with open(f"users/{username}/credentials.txt", "w") as f:
+                    f.write(new_password_hash)
+                print("\nPassword changed successfully.")
+            else:
+                raise ValueError("Passwords do not match !")
         else:
-            if user_password == password:
-                print_title(f"Modify {username}")
+            raise ValueError("Wrong current password !")
+    except ValueError as e:
+        print(f"\nError: {e}\n")
+
+
+def modify_user_modal(user_calling_func, all_users):
+    print_title("Modify User")
+    
+    users_info = list_users() # This function returns (users_list, no_user) or just no_user
+    if users_info is True: # no_user case
+        print("No users to modify.")
+        return
+
+    users_list, no_user_flag = users_info
+
+    if no_user_flag or not users_list:
+        print("No users available to modify.")
+        return
+
+    while True:
+        try:
+            print("Select a user to modify:")
+            for idx, u_name in enumerate(users_list, 1):
+                print(f"    {idx} - {u_name}")
+            print("0 - Return")
+
+            choice = input("(int) > ")
+            if choice == "0":
+                return # Exit this modal
+
+            selected_index = int(choice) - 1
+            if not (0 <= selected_index < len(users_list)):
+                raise ValueError("Invalid user selection.")
+            
+            username_to_modify = users_list[selected_index]
+            print(f"\nYou selected {username_to_modify}. Please enter their password.\n")
+            password_to_verify = getpass("(password) > ")
+            
+            if _verify_password(username_to_modify, password_to_verify):
+                print_title(f"Modify {username_to_modify}")
                 print("| 1 - Modify Username")
                 print("| 2 - Modify Password")
                 print("| 3 - Modify User Tasks")
-                print(f"| 4 - Connect to {username}")
+                print(f"| 4 - Connect to {username_to_modify}")
                 print("| 0 - Return")
 
-                options = [0, 1, 2 ,3]
-                option = int(input("(int) > "))
+                option_choice = input("(int) > ")
+                options_map = {
+                    "1": lambda: modify_user_username(username=username_to_modify),
+                    "2": lambda: modify_user_password(username=username_to_modify),
+                    "3": lambda: tasks_gestion_menu(username=username_to_modify, users=all_users),
+                    "4": lambda: login(username=username_to_modify, password=password_to_verify) # Pass original plaintext password for login
+                }
                 
-                try:
-                    if option in options:
-                        if option == 0:
-                            users_gestion_menu(user, users=users)
-                        if option == 1:
-                            modify_user_username(username=username)
-                        if option == 2:
-                            modify_user_password(username=username)
-                        if option == 3:
-                            tasks_gestion_menu(username=username, users=users)
-                        if option == 4:
-                            login(username=username, password=password)
-                    else:
-                        raise ValueError
-                except ValueError:
-                    print("Invalid value.")
-    except ValueError:
-        print("\nPassword cannot be empty.\n")
-
+                if option_choice == "0":
+                    return # Go back to user gestion menu
+                elif option_choice in options_map:
+                    options_map[option_choice]()
+                    return # Action performed, return to previous menu
+                else:
+                    print("Invalid option. Please choose from 0-4.")
+            else:
+                print("Incorrect password for the selected user.")
+            return # After attempt, return to user selection
+        except ValueError as e:
+            print(f"Error: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
 
 def wipe_data_for_user(username, users):
     try:
-        current_password: str
-        password: str
         print(f"\nYou will wipe data for {username} user, please think before act !")
         print(f"Please enter {username} current password.\n")
         current_password = str(getpass("(password) > "))
-        with open(f"users/{username}/credentials.txt", "r") as f:
-            password = f.read().strip()
-            f.close
-        if current_password is None or current_password == '':
-            raise ValueError
-        if current_password.__class__ is not str:
-            try:
-                if current_password == password:
-                    try:
-                        print("\nAccept.")
-                        todolist.show_tasks(username=username, users=users)
-                        print(f"\nAre you sure to wipe {username} data ?.\n")
-                        confirmation = str(input("(yes/no) > "))
-                        confirmation = confirmation.lower().strip()
-                        if confirmation not in ['yes', 'no']:
-                            raise ValueError
-                        confirm_confirmation = str(input("(confirm) > "))
-                        confirm_confirmation = confirm_confirmation.lower().strip()
-                        if confirm_confirmation not in ['yes', 'no']:
-                            raise ValueError
-                        if confirmation == 'no':
-                            pass
-                        else:
-                            if confirm_confirmation == 'no':
-                                pass
-                            else:
-                                os.remove(f"users/{username}/data.txt")
-                                print("Data Wiped.")
-                                menu(True)
-                    except ValueError:
-                        print("\nIt's just no or yes bro !")
+        
+        if _verify_password(username, current_password):
+            print("\nAccept.")
+            todolist.show_tasks(username=username, users=users)
+            print(f"\nAre you sure to wipe {username} data ?.\n")
+            confirmation = str(input("(yes/no) > "))
+            confirmation = confirmation.lower().strip()
+            if confirmation not in ["yes", "no"]:
+                raise ValueError("Invalid confirmation. Please type 'yes' or 'no'.")
+            
+            confirm_confirmation = str(input("(confirm) > "))
+            confirm_confirmation = confirm_confirmation.lower().strip()
+            if confirm_confirmation not in ["yes", "no"]:
+                raise ValueError("Invalid confirmation. Please type 'yes' or 'no'.")
+            
+            if confirmation == "yes" and confirm_confirmation == "yes":
+                data_file_path = f"users/{username}/data.txt"
+                if os.path.exists(data_file_path):
+                    os.remove(data_file_path)
+                    print("Data Wiped.")
+                    # It's better to return to the connected menu or a similar state rather than calling menu(True) directly
                 else:
-                    raise ValueError
-            except ValueError:
-                print("\nWrong Password !")
-    except ValueError:
-        print("\nPassword cannot be Empty !")
+                    print(f"No data file found for user {username}.")
+            else:
+                print("\nAction Cancelled.")
+        # _verify_password already prints error messages for incorrect password
+    except ValueError as e:
+        print(f"\nError: {e}\n")
+
 
 def delete_user(username, users):
     try:
-        current_password: str
-        password: str
         print(f"\nYou will delete {username} user, please think before act !")
         print(f"Please enter {username} current password.\n")
         current_password = str(getpass("(password) > "))
-        with open(f"users/{username}/credentials.txt", "r") as f:
-            password = f.read().strip()
-            f.close
-        if current_password is None or current_password == '':
-            raise ValueError
-        if current_password.__class__ is str:
-            try:
-                if current_password == password:
-                    try:
-                        print("\nAccept.")
-                        todolist.show_tasks(username=username, users=users)
-                        print(f"\nAre you sure to delete {username} account ?.\n")
-                        confirmation = str(input("(yes/no) > "))
-                        confirmation = confirmation.lower().strip()
-                        if confirmation not in ['yes', 'no']:
-                            raise ValueError
-                        confirm_confirmation = str(input("(confirm) > "))
-                        confirm_confirmation = confirm_confirmation.lower().strip()
-                        if confirm_confirmation not in ['yes', 'no']:
-                            raise ValueError
-                        if confirmation == 'no':
-                            print("\nAction Canceled.")
-                        else:
-                            if confirm_confirmation == 'no':
-                                print("\nAction cancled.")
-                            else:
-                                os.remove(f"users/{username}/")
-                                print("\nUser Deleted.")
-                                menu(False)
-                    except ValueError:
-                        print("\nIt's just no or yes bro !")
+        
+        if _verify_password(username, current_password):
+            print("\nAccept.")
+            todolist.show_tasks(username=username, users=users)
+            print(f"\nAre you sure to delete {username} account ?.\n")
+            confirmation = str(input("(yes/no) > "))
+            confirmation = confirmation.lower().strip()
+            if confirmation not in ["yes", "no"]:
+                raise ValueError("Invalid confirmation. Please type 'yes' or 'no'.")
+            
+            confirm_confirmation = str(input("(confirm) > "))
+            confirm_confirmation = confirm_confirmation.lower().strip()
+            if confirm_confirmation not in ["yes", "no"]:
+                raise ValueError("Invalid confirmation. Please type 'yes' or 'no'.")
+            
+            if confirmation == "yes" and confirm_confirmation == "yes":
+                user_dir = f"users/{username}"
+                if os.path.exists(user_dir):
+                    shutil.rmtree(user_dir)
+                    print("\nUser Deleted.")
                 else:
-                    raise ValueError
-            except ValueError:
-                print("\nWrong Password !")
-    except ValueError:
-        print("\nPassword cannot be Empty !")
+                    print(f"User directory for {username} not found.")
+            else:
+                print("\nAction Cancelled.")
+        # _verify_password already prints error messages for incorrect password
+    except ValueError as e:
+        print(f"\nError: {e}\n")
+
 
 def login(username, password):
 
-    logged = False
-    user = username
-    users = update_users_list()
-
-    if user in users:
-
-        with open(f"users/{username}/credentials.txt", "r", newline="\n") as f:
-            get_password = f.read().strip()    # First line is the password
-        if get_password == password:
-            logged = True
-            print(f"\nUser {username} logged !\n")
-            menu(True, username=username)
-            return logged
+    if os.path.exists(f"users/{username}/credentials.txt"):
+        with open(f"users/{username}/credentials.txt", "r") as f:
+            stored_hash = f.read().strip()
+        
+        if stored_hash.startswith(b'$2b$'.decode('utf-8')) or stored_hash.startswith(b'$2a$'.decode('utf-8')):
+            if bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
+                print(f"\nUser {username} logged !\n")
+                return (True, username)
+            else:
+                print("\nPassword is incorrect.. Sorry buddy..")
         else:
-            print("\nPassword is incorrect.. Sorry buddy..")
+            if stored_hash == password:
+                print("\nWarning: Using an old, unhashed password. Please update your password for better security.")
+                print(f"\nUser {username} logged !\n")
+                return (True, username)
+            else:
+                print("\nPassword is incorrect.. Sorry buddy..")
     else:
         print(f"\nUser {username} don't exists. Buy glasses.\n")
-    
+    return None
+
+
 def logout(username):
     print(f"User {username} logged out.\n")
-    return menu(False)
+    return (False, None)
+
 
 def initialization():
-
     os.makedirs("users", exist_ok=True)
 
-    with open("./initialization.txt", "w") as f:
-        f.write("True")
-    
     print("\nHello buddy, I'm Viktor the devlopper of the ToDoList app !")
     print("Check my networks : ")
-    print(f"     Github : {make_clickable('Vikbg', 'https://github.com/Vikbg/')} & {make_clickable('viktor_srhk', 'https://github.com/viktorsrhk/')}")
-    print(f"     Instagram : {make_clickable('viktor.wow', 'https://instagram.com/viktor.wow/')} (public) & {make_clickable('viktor_srhk', 'https://instagram.com/viktor_srhk/')} (private)")
-    print(f"     TikTok : {make_clickable('viktor_srhk', 'https://www.tiktok.com/@viktor_srhk')}")
-    print(f"     YouTube : {make_clickable('viktor', 'https://www.youtube.com/@viktorsrhk')}")
-    print(f"     Linkedin : {make_clickable('viktor_srhk', 'https://www.linkedin.com/in/viktorsrhk/')}")
+    print(
+        f"     Github : {make_clickable('Vikbg', 'https://github.com/Vikbg/')} & {make_clickable('viktor_srhk', 'https://github.com/viktorsrhk/')}"
+    )
+    print(
+        f"     Instagram : {make_clickable('viktor.wow', 'https://instagram.com/viktor.wow/')} (public) & {make_clickable('viktor_srhk', 'https://instagram.com/viktor_srhk/')} (private)"
+    )
+    print(
+        f"     TikTok : {make_clickable('viktor_srhk', 'https://www.tiktok.com/@viktor_srhk')}"
+    )
+    print(
+        f"     YouTube : {make_clickable('viktor', 'https://www.youtube.com/@viktorsrhk')}"
+    )
+    print(
+        f"     Linkedin : {make_clickable('viktor_srhk', 'https://www.linkedin.com/in/viktorsrhk/')}"
+    )
     print(f"     Replit : {make_clickable('VikS0', 'https://replit.com/@VikS0/')}")
     print(f"     Portfolio : {make_clickable(None, 'In The Pipeline.')}")
     print("Before we start, I need to ask you a few questions.")
@@ -741,7 +814,7 @@ def initialization():
     print("Let's create your profile of my new bestest user of the year (joke) !")
     print("How want you to name ?\n")
 
-    username = input("Your name ?? > ")
+    username = input("Your name ?? > ").strip()
 
     print(f"\nWow, your name {username} is fantastic, nice to meet you !!")
     print("Ok now you need to tell me a very top secret secret...")
@@ -750,71 +823,81 @@ def initialization():
 
     password = getpass("(password) > ")
 
-    print("\nOk I think we're good, not you ? So I will let you take place in the fantastic world of my ToDoList app ! Bye bye !\n")
+    print(
+        "\nOk I think we're good, not you ? So I will let you take place in the fantastic world of my ToDoList app ! Bye bye !\n"
+    )
 
     create_user(username=username, password=password)
-    login(username=username, password=password)
+    print(f"User {username} created. Please log in to continue.")
 
-    return username, password
 
 todolist = ToDoList()
 
+
 def deconnected_menu(users):
-    try:
+    while True: # Loop until a state change or exit
+        try:
             print_title("ToDoList by viktor_srhk - Menu")
             print("\n| 1 - Login")
             print("| 2 - Sign Up")
             print("| 3 - Credits")
             print("| 0 - Quit\n")
 
-            options = [0, 1, 2, 3]
-            option = int(input("Enter a option (intergers only) > "))
-
-            if option.__class__ is not int or option not in options:
-                raise ValueError
-                
-
-            if option == 0:
+            option = input("Enter an option (integers only) > ").strip()
+            
+            if option == "0":
                 print("Bye Bye !!")
-                return exit()
-            elif option == 1:
-                list_users()
-                if users == []:
-                    no_user = True
-                else:
-                    no_user = False
-                if no_user:
-                    print("0 - Return\n")
-                    print("Enter a option (intergers only).\n")
-                    option = int(input("(int) > "))
-
-                    if option == 0:
-                        menu(False)
-                    else:
-                        raise ValueError
-                else:
-                    selected_user = 1
-                    users_list = []
-                    for user in users:
-                        users_list.append(user)
-                    selected_user = int(input("Select a user. (ex : 1 for 1 - viktor_srhk.) >  "))
-                    i = selected_user - 1
-                    username = users_list[i]
-                    print(f"\nYou selected {username}, enter the password.\n")
-                    password = getpass("(password) > ")
-                    login(username=username, password=password)
-
-            elif option == 2:
+                exit() # Exit the program directly
+            elif option == "1":
+                users_list, no_user_flag = list_users()
+                if no_user_flag:
+                    print("No users to log in. Please sign up first.")
+                    input("\nPress Enter to return to menu...")
+                    continue # Stay in deconnected menu
+                
+                while True: # Loop for user selection and login
+                    try:
+                        selected_user_input = input("Select a user by number (ex: 1 for 1 - viktor_srhk.) or '0' to return > ").strip()
+                        if selected_user_input == '0':
+                            break # Go back to deconnected menu options
+                        
+                        selected_index = int(selected_user_input) - 1
+                        if not (0 <= selected_index < len(users_list)):
+                            raise ValueError("Invalid user number.")
+                        
+                        username = users_list[selected_index]
+                        print(f"\nYou selected {username}, enter the password.\n")
+                        password = getpass("(password) > ")
+                        login_result = login(username=username, password=password)
+                        if login_result:
+                            return login_result # Return (True, username) to main menu
+                        else:
+                            input("\nPress Enter to try again or return to menu...")
+                            # continue to allow user to re-enter password or select another user
+                    except ValueError as e:
+                        print(f"Error: {e}")
+                    except Exception as e:
+                        print(f"An unexpected error occurred during login attempt: {e}")
+            elif option == "2":
                 print("\nSign up.\n")
                 creation_user_modal()
-            elif option == 3:
+                input("\nPress Enter to return to menu...")
+            elif option == "3":
                 show_credits()
-                if input("\nPress Enter to return to menu..."):
-                    menu(False)
-    except ValueError:
-        print("\nInvalid value.")
+                input("\nPress Enter to return to menu...")
+            else:
+                print("Invalid option selected. Please choose from 0, 1, 2, 3.")
+                input("\nPress Enter to try again...")
+        except ValueError as e:
+            print(f"\nInvalid input: {e}")
+            input("\nPress Enter to try again...")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+    return None # Should ideally not be reached if there's a loop or exit
+
 
 def connected_menu(username, users):
+    while True: # Loop until a state change (logout) or exit
         try:
             print("\n| 1 - Tasks Gestion")
             print("| 2 - Users Gestion")
@@ -823,386 +906,469 @@ def connected_menu(username, users):
             print("| 9 - Logout")
             print("| 0 - Quit\n")
 
-            options = [0, 1, 2, 3, 4, 9]
-            option = int(input("Enter a option (intergers only): "))
+            option = input("Enter an option (integers only): ").strip()
 
-            if option not in options:
-                raise ValueError
-
-            if option == 0:
+            if option == "0":
                 print("Bye Bye !!")
-                return exit()
-            elif option == 9:
-                logout(username=username)
-            elif option == 1:
+                exit()
+            elif option == "9":
+                return logout(username=username) # Returns (False, None)
+            elif option == "1":
                 tasks_gestion_menu(username=username, users=users)
-            elif option == 2:
+                input("\nPress Enter to return to main menu...")
+            elif option == "2":
                 users_gestion_menu(username=username, users=users)
-            elif option == 3:
+                input("\nPress Enter to return to main menu...")
+            elif option == "3":
                 settings_menu(username=username, users=users)
-            elif option == 4:
+                input("\nPress Enter to return to main menu...")
+            elif option == "4":
                 show_credits()
-                if input("\nPress Enter to return to menu..."):
-                    menu(False)
-        except ValueError:
-            print("Incorrect Value.")
+                input("\nPress Enter to return to main menu...")
+            else:
+                print("Invalid option. Please choose from 0, 1, 2, 3, 4, 9.")
+                input("\nPress Enter to try again...")
+        except ValueError as e:
+            print(f"Incorrect Value: {e}")
+            input("\nPress Enter to try again...")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+    # If for some reason the loop breaks without logout/exit, return None
+    return None
+
 
 def tasks_gestion_menu(username, users):
-            try:
-                print_title("Tasks Gestion")
-                print("| 1 - Add task")
-                print("| 2 - Delete Task")
-                print("| 3 - Modify Task")
-                print("| 4 - Show all tasks.")
-                print("| 5 - Manage Backups")
-                print("| 0 - Return\n")
-
-                option = int(input("Enter a option (intergers only): "))
-
-                options = [1, 2, 3, 4, 5, 0]
-
-                if option not in options:
-                    raise ValueError
-                
-                if option == 0:
-                    menu(True)
-
-                elif option == 1:
-                    try:
-                        print("\nEnter the name of the task (tape \"q\" to cancel).")
-                        task_name = input("(name) > ")
-                        if task_name.lower() == 'q':
-                           raise ValueError
-                        print("\nEnter a description (facultatif, tape \"q\" to cancel).")
-                        task_description = input("(description) > ")
-                        if task_description.lower() == 'q':
-                            raise ValueError
-                        print("Before when you need to complete it ? (in days, tape \"q\" to cancel).")
-                        task_complete_to = float(input("(days) > "))
-                        if task_complete_to == 'q':
-                            raise ValueError
-                        elif task_complete_to.__class__ is not float and task_complete_to.__class__ is not int:
-                            raise TypeError
-                        
-                        todolist.add_task(name=task_name, complete_before=task_complete_to, description=task_description)
-                        todolist.save_data_file(username=username)
-
-                    except ValueError:
-                        print("Cancelled task creation.\n")
-                    except TypeError:
-                        print("Type error, except a float number or a interger ! Like a number 1 or 1.0, 1.335, 2, 3 ect...")
-    
-                elif option == 2:
-                    todolist.print_tasks(username=username)
-                    try:
-                        print("Enter the id of the task to delete (ex: 1 for 1 - Do my Homeworks, enter \"q\" to cancel).")
-                        task_to_delete = input("(task) > ")
-                        if task_to_delete.lower() == 'q':
-                            raise ValueError
-                        elif int(task_to_delete).__class__ is int:
-                            task_to_delete = int(task_to_delete)
-                            todolist.delete_task(task_to_delete, username=username)
-                        else:
-                            raise TypeError
-                    except TypeError:
-                        print("\nTask Not found.")
-                    except ValueError:
-                        print("\nCancelled task creation.")
-
-                elif option == 3:
-                    todolist.load_from_data_file(username=username)
-                    todolist.show_tasks(username=username, users=users)
-
-                    n_tasks: int
-                    n_tasks = int(todolist.tasks.__len__())
-                    
-                    if n_tasks == 0:
-                        print("No Task Found")
-                        tasks_gestion_menu(username=username, users=users)
-                    else:
-                        try:
-                            print("Enter the id of the task you want to change the info. (Ex: 1 for 1 - Do my Homeworks, enter 'q' to cancel).")
-                            task_id = input("(id) > ")
-
-                            if task_id.lower() == 'q':
-                                print("Action canceled.")
-                                return
-
-                            try:
-                                task_id = int(task_id)
-                            except ValueError:
-                                print("Invalid ID — must be a number.")
-                                return
-
-                            tasks_id = [i + 1 for i in range(n_tasks)]
-
-                            if task_id not in tasks_id:
-                                print("This task ID does not exist.")
-                                return
-
-                            new_name = input("Enter the new name (leave blank to skip): ") or None
-                            new_description = input("Enter the new description (leave blank to skip): ") or None
-
-                            new_completed = input("Is it completed ? (yes/no, leave blank to skip): ").lower()
-                            if new_completed == 'yes':
-                                new_completed = True
-                            elif new_completed == 'no':
-                                new_completed = False
-                            elif new_completed == '':
-                                new_completed = None
-                            else:
-                                print("Invalid input for completion status.")
-                                return
-
-                            new_complete_before = input("Before when do you want to end this task? (leave blank to skip): ")
-                            if new_complete_before == '':
-                                new_complete_before = None
-                            else:
-                                try:
-                                    new_complete_before = float(new_complete_before)
-                                except ValueError:
-                                    print("Invalid number for 'complete before'. Skipped.")
-                                new_complete_before = None
-
-                            todolist.modify_task(task_id, new_name, new_description, new_complete_before, completed=new_completed)
-
-                        except Exception as e:
-                            print(f"An unexpected error occurred: {e}")
-
-
-                elif option == 4:
-                    todolist.load_from_data_file(username=username)
-                    todolist.show_tasks(username=username, users=users)
-                elif option == 5:
-                    print_title("Backups Gestion")
-                    print("| 1 - Create Backup")
-                    print("| 2 - Restore Backup")
-                    print("| 3 - Delete Backup")
-                    print("| 0 - Return\n")
-
-                    backup_options = [0, 1, 2, 3]
-                    backup_option = int(input("(int) > "))
-
-                    try:
-                        if backup_option in backup_options:
-                            if backup_option == 0:
-                                tasks_gestion_menu(username=username, users=users)
-                            elif backup_option == 1:
-                                todolist.save_backup(username=username)
-                            elif backup_option == 2:
-                                todolist.show_backups(username=username)
-                                print("\nEnter the timestamp of the backup you want to restore (ex : 1700000000), enter \"q\" to cancel.\n")
-                                selected_backup = input("(timestamp) > ")
-                                if selected_backup.lower() == 'q':
-                                    raise ValueError
-                                todolist.load_from_backup(username=username, timestamp=selected_backup)
-                            elif backup_option == 3:
-                                todolist.show_backups(username=username)
-                                print("\nEnter the timestamp of the backup you want to delete (ex : 1700000000), enter \"q\" to cancel.\n")
-                                selected_backup = input("(timestamp) > ")
-                                if selected_backup.lower() == 'q':
-                                    raise ValueError
-                                todolist.delete_backup(username=username, timestamp=selected_backup)
-                        else:
-                            raise ValueError
-                    except ValueError:
-                        print("\nIncorrect Value.")
-            except ValueError:
-                print("\nIncorrect Value.")
-
-def settings_menu(username, users):
-            print_title("Settings")
-            print("| 1 - Change Username")
-            print("| 2 - Change Password")
-            print("| 3 - Delete My Data")
-            print("| 5 - Delete My Account")
+    while True:
+        try:
+            print_title("Tasks Gestion")
+            print("| 1 - Add task")
+            print("| 2 - Delete Task")
+            print("| 3 - Modify Task")
+            print("| 4 - Show all tasks.")
+            print("| 5 - Manage Backups")
             print("| 0 - Return\n")
 
-            options = [0, 1, 2, 3, 4, 5]
-            option = int(input("(int) > "))
+            option = input("Enter an option (integers only): ").strip()
 
-            try:
-                if option.__class__ is int:
-                    try:
-                        if option in options:
-                            if option == 0:
-                                menu(True)
-                            elif option == 1:
-                                modify_user_username(username=username)
-                            elif option == 2:
-                                modify_user_password(username=username)
-                            elif option == 3:
-                                wipe_data_for_user(username=username, users=users)
-                            elif option == 4:
-                                delete_user(username=username, users=users)
-                        else:
-                            raise ValueError
-                    except ValueError:
-                        print("\nSeriously buy glasses buddy, you need to choose between a few nums what's complicated ??")
+            if option == "0":
+                return # Return to connected_menu
+
+            elif option == "1":
+                try:
+                    print('\nEnter the name of the task (type "q" to cancel).')
+                    task_name = input("(name) > ").strip()
+                    if task_name.lower() == "q":
+                        raise ValueError("Task creation cancelled.")
+                    if not task_name:
+                        raise ValueError("Task name cannot be empty.")
+                    
+                    print('\nEnter a description (optional, type "q" to cancel).')
+                    task_description = input("(description) > ").strip()
+                    if task_description.lower() == "q":
+                        task_description = None # Set to None if cancelled
+                    
+                    print(
+                        'Before when do you need to complete it? (in days, type "q" to cancel).'
+                    )
+                    task_complete_to_str = input("(days) > ").strip()
+                    if task_complete_to_str.lower() == "q":
+                        raise ValueError("Task creation cancelled.")
+                    
+                    task_complete_to = float(task_complete_to_str)
+                    if task_complete_to < 0:
+                        raise ValueError("Days to complete must be a non-negative number.")
+
+                    todolist.add_task(
+                        name=task_name,
+                        complete_before=task_complete_to,
+                        description=task_description,
+                    )
+                    todolist.save_data_file(username=username)
+                    input("\nPress Enter to return to tasks menu...")
+
+                except ValueError as ve:
+                    print(f"Error: {ve}\n")
+                    input("\nPress Enter to return to tasks menu...")
+                except TypeError:
+                    print(
+                        "Type error: Please enter a valid number for days (e.g., 1, 1.5, 2).\n"
+                    )
+                    input("\nPress Enter to return to tasks menu...")
+                except Exception as e:
+                    print(f"An unexpected error occurred: {e}\n")
+                    input("\nPress Enter to return to tasks menu...")
+
+            elif option == "2":
+                todolist.print_tasks(username=username)
+                try:
+                    if not todolist.tasks:
+                        print("No tasks to delete.")
+                        input("\nPress Enter to return to tasks menu...")
+                        continue
+
+                    task_to_delete_str = input(
+                        'Enter the ID of the task to delete (e.g., 1 for "1 - Do my Homeworks", type "q" to cancel).'
+                    ).strip()
+                    if task_to_delete_str.lower() == "q":
+                        print("Deletion cancelled.")
+                        input("\nPress Enter to return to tasks menu...")
+                        continue
+                    
+                    task_to_delete = int(task_to_delete_str)
+                    if not (0 < task_to_delete <= len(todolist.tasks)):
+                        raise ValueError("Invalid task ID.")
+
+                    todolist.delete_task(task_to_delete, username=username)
+                    todolist.save_data_file(username=username) # Save changes after deletion
+                    input("\nPress Enter to return to tasks menu...")
+                except ValueError as ve:
+                    print(f"Error: {ve}\n")
+                    input("\nPress Enter to return to tasks menu...")
+                except Exception as e:
+                    print(f"An unexpected error occurred: {e}\n")
+                    input("\nPress Enter to return to tasks menu...")
+
+            elif option == "3":
+                todolist.load_from_data_file(username=username)
+                todolist.print_tasks(username=username)
+
+                n_tasks = len(todolist.tasks)
+
+                if n_tasks == 0:
+                    print("No tasks found to modify.")
+                    input("\nPress Enter to return to tasks menu...")
+                    continue
                 else:
-                    raise TypeError
-            except TypeError:
-                print("\nYou need to enter a interger number like 1, 2, 3 ... , idiot.")
+                    try:
+                        task_id_str = input(
+                            "Enter the ID of the task you want to change (e.g., 1 for '1 - Do my Homeworks', type 'q' to cancel)."
+                        ).strip()
+
+                        if task_id_str.lower() == "q":
+                            print("Modification cancelled.")
+                            input("\nPress Enter to return to tasks menu...")
+                            continue
+
+                        task_id = int(task_id_str)
+                        if not (0 < task_id <= n_tasks):
+                            raise ValueError("Invalid ID: Must be within task list range.")
+
+                        current_task = todolist.tasks[task_id - 1]
+                        print(f"\nModifying task: {current_task.name}")
+
+                        new_name = input(f"Enter new name (current: '{current_task.name}', leave blank to skip): ").strip()
+                        new_name = new_name if new_name else None
+
+                        new_description = input(f"Enter new description (current: '{current_task.description if current_task.description else 'None'}', leave blank to skip): ").strip()
+                        new_description = new_description if new_description else None
+
+                        new_completed_str = input(
+                            f"Is it completed? (current: {'yes' if current_task.completed else 'no'}, type 'yes'/'no', leave blank to skip): "
+                        ).lower().strip()
+                        new_completed = None
+                        if new_completed_str == "yes":
+                            new_completed = True
+                        elif new_completed_str == "no":
+                            new_completed = False
+                        elif new_completed_str != "":
+                            raise ValueError("Invalid input for completion status. Type 'yes', 'no', or leave blank.")
+
+                        new_complete_before_str = input(
+                            f"Before when do you want to end this task? (current due: {current_task.complete_before.strftime('%Y-%m-%d')}, enter days from now, leave blank to skip): "
+                        ).strip()
+                        new_complete_before = None
+                        if new_complete_before_str:
+                            new_complete_before = float(new_complete_before_str)
+
+                        if todolist.modify_task(
+                            task_id,
+                            new_name,
+                            new_description,
+                            new_complete_before,
+                            completed=new_completed,
+                        ):
+                            todolist.save_data_file(username=username) # Save changes if modification occurred
+                        input("\nPress Enter to return to tasks menu...")
+
+                    except ValueError as ve:
+                        print(f"Error: {ve}\n")
+                        input("\nPress Enter to return to tasks menu...")
+                    except Exception as e:
+                        print(f"An unexpected error occurred: {e}\n")
+                        input("\nPress Enter to return to tasks menu...")
+
+            elif option == "4":
+                todolist.load_from_data_file(username=username)
+                todolist.show_tasks(username=username, users=users)
+                input("\nPress Enter to return to tasks menu...")
+            elif option == "5":
+                print_title("Backups Gestion")
+                print("| 1 - Create Backup")
+                print("| 2 - Restore Backup")
+                print("| 3 - Delete Backup")
+                print("| 0 - Return\n")
+
+                backup_option_str = input("(int) > ").strip()
+
+                if backup_option_str == "0":
+                    input("\nPress Enter to return to tasks menu...")
+                    continue # Go back to tasks menu
+                
+                try:
+                    backup_option = int(backup_option_str)
+
+                    if backup_option == 1:
+                        todolist.save_backup(username=username)
+                        input("\nPress Enter to return to tasks menu...")
+                    elif backup_option == 2:
+                        todolist.show_backups(username=username)
+                        if not os.path.exists(os.path.join("users", username, "backups")) or not os.listdir(os.path.join("users", username, "backups")):
+                            input("\nPress Enter to return to tasks menu...")
+                            continue
+
+                        selected_backup = input(
+                            '\nEnter the timestamp of the backup you want to restore (e.g., 1700000000), type "q" to cancel).\n(timestamp) > '
+                        ).strip()
+                        if selected_backup.lower() == "q":
+                            print("Restore cancelled.")
+                            input("\nPress Enter to return to tasks menu...")
+                            continue
+                        # Validate timestamp format if possible
+                        todolist.load_from_backup(
+                            username=username, timestamp=selected_backup
+                        )
+                        todolist.load_from_data_file(username=username) # Reload tasks after restoring backup
+                        input("\nPress Enter to return to tasks menu...")
+                    elif backup_option == 3:
+                        todolist.show_backups(username=username)
+                        if not os.path.exists(os.path.join("users", username, "backups")) or not os.listdir(os.path.join("users", username, "backups")):
+                            input("\nPress Enter to return to tasks menu...")
+                            continue
+
+                        selected_backup = input(
+                            '\nEnter the timestamp of the backup you want to delete (e.g., 1700000000), type "q" to cancel).\n(timestamp) > '
+                        ).strip()
+                        if selected_backup.lower() == "q":
+                            print("Deletion cancelled.")
+                            input("\nPress Enter to return to tasks menu...")
+                            continue
+                        # Validate timestamp format if possible
+                        todolist.delete_backup(
+                            username=username, timestamp=selected_backup
+                        )
+                        input("\nPress Enter to return to tasks menu...")
+                    else:
+                        print("Invalid backup option.")
+                        input("\nPress Enter to try again...")
+                except ValueError as ve:
+                    print(f"Error: {ve}\n")
+                    input("\nPress Enter to return to tasks menu...")
+                except Exception as e:
+                    print(f"An unexpected error occurred during backup management: {e}\n")
+                    input("\nPress Enter to return to tasks menu...")
+            else:
+                print("Invalid option selected. Please enter a number from 0 to 5.")
+                input("\nPress Enter to try again...")
+        except ValueError as ve:
+            print(f"Error: {ve}\n")
+            input("\nPress Enter to try again...")
+        except Exception as e:
+            print(f"An unexpected error occurred in tasks management: {e}\n")
+            input("\nPress Enter to try again...")
+
+
+def settings_menu(username, users):
+    while True:
+        print_title("Settings")
+        print("| 1 - Change Username")
+        print("| 2 - Change Password")
+        print("| 3 - Delete My Data")
+        print("| 4 - Delete My Account") # Corrected option number
+        print("| 0 - Return\n")
+
+        option = input("(int) > ").strip()
+
+        try:
+            if option == "0":
+                return # Return to connected_menu
+            elif option == "1":
+                modify_user_username(username=username)
+                input("\nPress Enter to return to settings menu...")
+            elif option == "2":
+                modify_user_password(username=username)
+                input("\nPress Enter to return to settings menu...")
+            elif option == "3":
+                wipe_data_for_user(username=username, users=users)
+                input("\nPress Enter to return to settings menu...")
+            elif option == "4": # Corrected option number
+                delete_user(username=username, users=users)
+                return # User deleted, should force logout and return to main deconnected menu
+            else:
+                print(
+                    "\nInvalid option. Please choose between 0, 1, 2, 3, 4."
+                )
+                input("\nPress Enter to try again...")
+        except ValueError as ve:
+            print(f"\nError: {ve}")
+            input("\nPress Enter to try again...")
+        except Exception as e:
+            print(f"\nAn unexpected error occurred: {e}")
+            input("\nPress Enter to try again...")
+
 
 def users_gestion_menu(username, users):
-    print_title("User Gestion")
-    print("| 1 - Add User")
-    print("| 2 - Modify User")
-    print("| 3 - Delete User")
-    print("| 4 - Wipe Selected User Data")
-    print("| 0 - Return")
+    while True:
+        print_title("User Gestion")
+        print("| 1 - Add User")
+        print("| 2 - Modify User")
+        print("| 3 - Delete User")
+        print("| 4 - Wipe Selected User Data")
+        print("| 0 - Return")
 
-    options = [0, 1, 2, 3, 4]
+        option = input("\n(option) > ").strip()
 
-    option = input("\n(option) > ")
-
-    try:
-        if option in options:
-            if option == 0:
-                connected_menu(username=username, users=users)
-            elif option == 1:
+        try:
+            if option == "0":
+                return # Return to connected_menu
+            elif option == "1":
                 print("\nYou will create a new user.\n")
                 creation_user_modal()
-            elif option == 2:
-                modify_user_modal(user=username, users=users)
-            elif option == 3:
+                input("\nPress Enter to return to user gestion menu...")
+            elif option == "2":
+                modify_user_modal(user_calling_func=username, all_users=users)
+                input("\nPress Enter to return to user gestion menu...")
+            elif option == "3":
                 try:
                     print_title("Delete User")
-                    list_users()
-                    selected_user = 1
-                    users_list = []
-                    for user in users:
-                        users_list.append(user)
-                    selected_user = int(input("Select a user. (ex : 1 for 1 - viktor_srhk.) >  "))
-                    if selected_user in users:
-                        i = selected_user - 1
-                        username = users_list[i]
-                        delete_user(username=username, users=users)
-                    else:
-                        raise ValueError
-                except ValueError:
-                    print("User Not Found.")
+                    users_list, no_user_flag = list_users()
+                    if no_user_flag:
+                        print("No users to delete.")
+                        input("\nPress Enter to return to user gestion menu...")
+                        continue
 
-            elif option == 4:
+                    selected_user_input = input(
+                        "Select a user by number (ex : 1 for 1 - viktor_srhk.) or '0' to return >  "
+                    ).strip()
+                    if selected_user_input == '0':
+                        print("Deletion cancelled.")
+                        input("\nPress Enter to return to user gestion menu...")
+                        continue
+
+                    selected_index = int(selected_user_input) - 1
+                    if not (0 <= selected_index < len(users_list)):
+                        raise ValueError("Invalid user selection.")
+                    
+                    user_to_delete = users_list[selected_index]
+                    delete_user(username=user_to_delete, users=users)
+                    input("\nPress Enter to return to user gestion menu...")
+                except ValueError as ve:
+                    print(f"Error: {ve}")
+                    input("\nPress Enter to return to user gestion menu...")
+                except Exception as e:
+                    print(f"An unexpected error occurred: {e}")
+                    input("\nPress Enter to return to user gestion menu...")
+
+            elif option == "4":
                 try:
                     print_title("Wipe User Data")
-                    list_users()
-                    selected_user = 1
-                    users_list = []
-                    for user in users:
-                        users_list.append(user)
-                    selected_user = int(input("Select a user. (ex : 1 for 1 - viktor_srhk.) >  "))
-                    if selected_user in users:
-                        i = selected_user - 1
-                        username = users_list[i]
-                        wipe_data_for_user(username=username, users=users)
-                    else:
-                        raise ValueError
-                except ValueError:
-                    print("User Not Found.")
-        else:
-            raise ValueError
-    except ValueError:
-        pass
+                    users_list, no_user_flag = list_users()
+                    if no_user_flag:
+                        print("No user data to wipe.")
+                        input("\nPress Enter to return to user gestion menu...")
+                        continue
+
+                    selected_user_input = input(
+                        "Select a user by number (ex : 1 for 1 - viktor_srhk.) or '0' to return >  "
+                    ).strip()
+                    if selected_user_input == '0':
+                        print("Wipe data cancelled.")
+                        input("\nPress Enter to return to user gestion menu...")
+                        continue
+
+                    selected_index = int(selected_user_input) - 1
+                    if not (0 <= selected_index < len(users_list)):
+                        raise ValueError("Invalid user selection.")
+                    
+                    user_to_wipe_data = users_list[selected_index]
+                    wipe_data_for_user(username=user_to_wipe_data, users=users)
+                    input("\nPress Enter to return to user gestion menu...")
+                except ValueError as ve:
+                    print(f"Error: {ve}")
+                    input("\nPress Enter to return to user gestion menu...")
+                except Exception as e:
+                    print(f"An unexpected error occurred: {e}")
+                    input("\nPress Enter to return to user gestion menu...")
+            else:
+                print("Invalid option. Please choose from 0, 1, 2, 3, 4.")
+                input("\nPress Enter to try again...")
+        except ValueError as ve:
+            print(f"Error: {ve}")
+            input("\nPress Enter to try again...")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            input("\nPress Enter to try again...")
 
 
-def menu(logged, username=None):
-    try:
-        grettings = True
-        update_users_list()
-        users = update_users_list()
-        while True:
-            while logged is False:
-                deconnected_menu(users=users)
+def menu():
+    logged = False
+    username = None
+    grettings = True
 
-            
-            try:
-                if grettings is True:
-                    print(f"Hello, {username}, what's up !")
+    while True:
+        try:
+            current_users = update_users_list() # Get the latest list of users
+            if not logged:
+                # deconnected_menu should return a tuple (logged, username) or None
+                result = deconnected_menu(current_users)
+                if result: # If deconnected_menu returned something (i.e., a login attempt)
+                    logged, username = result
+                    grettings = True # Reset greetings for new login
+            else:
+                if grettings:
+                    print(f"\nHello, {username}, what's up !")
                     grettings = False
-
-                connected_menu(username=username, users=users)
-            except KeyboardInterrupt:
+                
+                # connected_menu should return a tuple (logged, username) or None
+                result = connected_menu(username, current_users)
+                if result: # If connected_menu returned something (e.g., logout)
+                    logged, username = result
+                    if not logged: # If logged out
+                        grettings = True # Reset greetings
+        except KeyboardInterrupt:
+            if username:
                 print(f"\n\nBye Bye {username}!\n")
-                exit()
-    except KeyboardInterrupt:
-        print("\nBye Bye !")
-        exit()
+            else:
+                print("\n\nBye Bye !\n")
+            exit()
+
 
 def main():
-    try:
-        with open("./initialization.txt", "r") as f:
-            if f.read().split() == ['False']:
-                initialized = False
-            else:
-                initialized = True
-    except FileNotFoundError:
-        with open("./initialization.txt", "+x") as f:
-            f.write("False")
-            initialized = False
+    # Check if the application has been initialized (i.e., if there are any users)
+    is_initialized = False
+    if os.path.exists("users") and os.listdir("users"):
+        is_initialized = True
 
-    if initialized is False:
+    if not is_initialized:
         print("Initialization of the App !")
         try:
-            user_accept = input("Do you want to continue ? (yes/no default: yes): ")
+            user_accept = input("Do you want to continue with initialization? (yes/no default: yes): ").strip().lower()
 
-            if user_accept == '' or user_accept.lower() == 'yes':
-                if 'users' in os.listdir("./"):
-                    print("\nUsers detected, no initialization needed.")
-                    with open("./initialization.txt", "+wt") as f:
-                        f.write("True")
-                        initialized = True
-                    menu(False)
-                else:
-                    initialization()
-                    menu(True)
-            elif user_accept.lower() == 'no':
-                continue_init = False
-                return continue_init
+            if user_accept == "" or user_accept == "yes":
+                initialization() # This will create the first user and log them in
+            elif user_accept == "no":
+                print("Application not initialized. Exiting.")
+                return
             else:
-                raise ValueError
-        except ValueError:
-            print("Incorrect value.. Bro it's just no or yes..")
-    else:
-        menu(False)
+                raise ValueError("Incorrect value. Please respond 'yes' or 'no'.")
+        except ValueError as ve:
+            print(f"Error: {ve}")
+            return # Exit if initialization was not accepted or had an error
+        except Exception as e:
+            print(f"An unexpected error occurred during initialization: {e}")
+            return # Exit on unexpected error
+
+    # Start the main menu loop
+    menu()
 
 if __name__ == "__main__":
     main()
-
-# Ajouter une confirmation avant de supprimer un utilisateur : Fait
-# Ajouter une option pour que l'utilisateur puisse changer son mot de passe : Fait
-# Ajouter une option pour que l'utilisateur puisse supprimer son compte : Fait
-# Ajouter une option pour marquer une tache comme complétée : Fait
-# Ajouter une option pour voir les tasks complétées et non complétées séparément : Fait
-# Ajouter une option pour trier les tasks par date d'échéance : Fait
-# Ajouter une option pour trier les tasks par date de modification : Fait
-# Ajouter une option pour rechercher une tache par nom ou description : Fait
-# Ajouter une option pour exporter les tasks au format CSV ou JSON : Non-Fait (Peut-Etre Plus Tard)
-# Ajouter une interface graphique avec Tkinter ou PyQt : Non-Fait (Pas Prevu)
-# Ajouter une base de données pour stocker les utilisateurs et les tasks : Non-Fait (Peut-Etre Plus Tard)
-# Ajouter des tests unitaires pour le code : Non-Fait
-# Ajouter une documentation pour le code : Non-Fait
-# Ajouter un fichier README pour le projet : Non-Fait
-# Ajouter une licence pour le projet : Non-Fait
-# Ajouter un système de journalisation pour suivre les actions de l'utilisateur : Fait
-# Ajouter une option pour sauvegarder automatiquement les tasks à chaque modification : Fait
-# Ajouter une option pour restaurer les tasks à partir d'une sauvegarde précédente : Fait
-# Ajouter une option pour définir des rappels pour les tasks : Non-Fait (Pas Prevu)
-# Ajouter une option pour personnaliser l'apparence de l'application : Non-Fait
-# Ajouter une option pour partager les tasks avec d'autres utilisateurs : Non-Fait (Pas Prevu)
-# Ajouter une option pour synchroniser les tasks avec un service cloud : Non-Fait (Pas Prevu)
-# Ajouter une option pour importer des tasks à partir d'un fichier externe : Non-Fait
-# Ajouter une option pour archiver les tasks complétées : Non-Fait
-# Ajouter une option pour définir des priorités pour les tasks : Non-Fait (Pas Prevu)
-# Ajouter une option pour filtrer les tasks par priorité ou date d'échéance : Non-Fait (Pas Prevu)
-# Ajouter une option pour créer des sous-tasks pour une tache principale : Non-Fait (Pas Prevu)
-# Ajouter une option pour attribuer des tasks à d'autres utilisateurs : Non-Fait (Pas Prevu)
-# Ajouter une option pour suivre le temps passé sur chaque tache : Non-Fait (Pas Prevu)
-# Ajouter une option pour générer des rapports sur les tasks complétées et en cours : Non-Fait  (Pas Prevu)
-# Ajouter une option pour définir des objectifs hebdomadaires ou mensuels pour les tasks : Non-Fait (Pas Prevu)
-# Ajouter une option pour recevoir des notifications par email pour les tasks à venir : Non-Fait (Pas Prevu)
-# Ajouter une option pour intégrer l'application avec un calendrier externe : Non-Fait (Pas Prevu)
-# Ajouter une option pour personnaliser les notifications et les rappels : Non-Fait (Pas Prevu)
-# Ajouter une option pour créer des modèles de tasks récurrentes : Non-Fait (Pas Prevu)
-# Ajouter une option pour suivre les progrès sur les tasks à long terme : Non-Fait (Pas Prevu)
-# Ajouter une option pour collaborer sur des tasks avec d'autres utilisateurs en temps réel : Non-Fait (Pas Prevu)
