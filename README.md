@@ -42,7 +42,7 @@ python main.py
 Developed with ❤️ by Viktor Serhiienko (aka viktor_srhk)
 📄 License
 
-This project is licensed under the MIT License – see the LICENSE
+This project is licensed under the MIT License - see the LICENSE
 
 file for details.
 
