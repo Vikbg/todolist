@@ -1,4 +1,4 @@
-# 📝 ToDoList CLI App
+## todolist
 
 ![Python](https://img.shields.io/badge/python-3.x-blue?logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -7,12 +7,12 @@
 ![Last commit](https://img.shields.io/github/last-commit/Vikbg/todolist)
 ![Made with love](https://img.shields.io/badge/made%20with-love-red)
 
-A simple **command-line To-Do list manager** written in Python.
+A simple command-line To-Do list manager written in Python.
 
 
 ---
 
-## 📸 Screenshots
+### Screenshots
 
 ![Screenshot 1](docs/assets/Screenshot1.png)
 ![Screenshot 2](docs/assets/Screenshot2.png)
@@ -20,16 +20,16 @@ A simple **command-line To-Do list manager** written in Python.
 
 ---
 
-## ⚙️ Features
+### Features
 
-- 👤 User management  
-- ✅ Task creation, modification, and deletion  
-- 💾 Automatic JSON backups  
-- 🖥️ Intuitive CLI interface  
+- User management  
+- Task creation, modification, and deletion  
+- Automatic JSON backups  
+- Intuitive CLI interface  
 
 ---
 
-## 🚀 Installation
+### Installation
 
 ```bash
 git clone https://github.com/Vikbg/todolist.git
@@ -37,10 +37,11 @@ cd todolist
 python main.py
 ```
 
-💡 Credits
+Credits
 
-Developed with ❤️ by Viktor Serhiienko (aka viktor_srhk)
-📄 License
+Developed with <3 by viktor_srhk.  
+
+License
 
 This project is licensed under the MIT License - see the LICENSE
 
